@@ -51,6 +51,10 @@ producer_conf = {
 producer = SerializingProducer(producer_conf)
 
 df = pd.read_parquet(r'D:\Just Data\Uber Real-Time Analytics Pipeline\yellow_tripdata_2025-01.parquet')
+df = df.where(pd.notnull(df), None)
+
+datetime_cols = ['tpep_pickup_datetime', 'tpep_dropoff_datetime']
+df[datetime_cols] = df[datetime_cols].astype(str)
 
 topic = 'uber_trips'
 
@@ -61,10 +65,12 @@ def delivery_report(err,msg):
         print(f"Record {msg.key()} successfully produced to {msg.topic()} [{msg.partition()}]")
 
 
+print("Starting to stream trip events to Kafka...")
+
 for i, row in df.iterrows():
     record = row.to_dict()
 
-    producer.produce(topic = topic, key = str(i), on_delivery = delivery_report)
+    producer.produce(topic = topic, key = str(i), value = record, on_delivery = delivery_report)
 
     time.sleep(1)
 
