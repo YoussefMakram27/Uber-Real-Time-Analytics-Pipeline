@@ -1,80 +1,46 @@
 import time
+import json
 import pandas as pd
-from confluent_kafka import SerializingProducer
-from confluent_kafka.schema_registry import SchemaRegistryClient
-from confluent_kafka.schema_registry.json_schema import JSONSerializer
-from confluent_kafka.serialization import StringSerializer
+from confluent_kafka import Producer
 
-trip_schema = '''{
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "title": "UberTripEvent",
-    "type": "object",
-    "properties": {
-        "VendorID": {"type": ["integer", "null"]},
-        "tpep_pickup_datetime": {"type": ["string", "null"]},
-        "tpep_dropoff_datetime": {"type": ["string", "null"]},
-        "passenger_count": {"type": ["integer", "null"]},
-        "trip_distance": {"type": ["number", "null"]},
-        "RatecodeID": {"type": ["integer", "null"]},
-        "store_and_fwd_flag": {"type": ["string", "null"]},
-        "PULocationID": {"type": ["integer", "null"]},
-        "DOLocationID": {"type": ["integer", "null"]},
-        "payment_type": {"type": ["integer", "null"]},
-        "fare_amount": {"type": ["number", "null"]},
-        "extra": {"type": ["number", "null"]},
-        "mta_tax": {"type": ["number", "null"]},
-        "tip_amount": {"type": ["number", "null"]},
-        "tolls_amount": {"type": ["number", "null"]},
-        "improvement_surcharge": {"type": ["number", "null"]},
-        "total_amount": {"type": ["number", "null"]},
-        "congestion_surcharge": {"type": ["number", "null"]},
-        "Airport_fee": {"type": ["number", "null"]},
-        "cbd_congestion_fee": {"type": ["number", "null"]}
-    },
-    "required": ["tpep_pickup_datetime", "tpep_dropoff_datetime"]
-}'''
-
+# --- Kafka Config ---
 bootstrap_servers = 'localhost:9092'
-schema_registry_url = 'http://localhost:8081'
+topic = 'uber_trips'
 
-schema_registry_conf = {'url': schema_registry_url}
-schema_registry_client = SchemaRegistryClient(schema_registry_conf)
+producer = Producer({'bootstrap.servers': bootstrap_servers})
 
-json_serializer = JSONSerializer(trip_schema, schema_registry_client)
-
-producer_conf = {
-    'bootstrap.servers': bootstrap_servers,
-    'key.serializer': StringSerializer('utf-8'),
-    'value.serializer': json_serializer
-}
-
-producer = SerializingProducer(producer_conf)
-
+# --- Load data ---
 df = pd.read_parquet(r'D:\Just Data\Uber Real-Time Analytics Pipeline\yellow_tripdata_2025-01.parquet')
+
+# Replace NaN with None for JSON serialization
 df = df.where(pd.notnull(df), None)
 
+# Ensure datetime columns are string
 datetime_cols = ['tpep_pickup_datetime', 'tpep_dropoff_datetime']
 df[datetime_cols] = df[datetime_cols].astype(str)
 
-topic = 'uber_trips'
-
-def delivery_report(err,msg):
+# --- Delivery report ---
+def delivery_report(err, msg):
     if err is not None:
         print(f"Delivery failed for record {msg.key()}: {err}")
     else:
-        print(f"Record {msg.key()} successfully produced to {msg.topic()} [{msg.partition()}]")
+        print(f"Record {msg.key()} produced to {msg.topic()} [{msg.partition()}]")
 
-
+# --- Produce to Kafka ---
 print("Starting to stream trip events to Kafka...")
 
 for i, row in df.iterrows():
     record = row.to_dict()
+    producer.produce(
+        topic=topic,
+        key=str(i),
+        value=json.dumps(record),  # <-- plain JSON string
+        on_delivery=delivery_report
+    )
+    time.sleep(0.5)  # adjust speed
 
-    producer.produce(topic = topic, key = str(i), value = record, on_delivery = delivery_report)
-
-    time.sleep(1)
-
-    if i%10 == 0:
+    if i % 20 == 0:
         producer.flush()
 
-producer.flush()    
+producer.flush()
+print("Finished producing messages.")
