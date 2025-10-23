@@ -1,5 +1,5 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.types import StructType, StructField, IntegerType, FloatType, StringType, TimestampType, LongType
+from pyspark.sql.types import StructType, StructField, IntegerType, FloatType, StringType, TimestampType, LongType, DoubleType
 from pyspark.sql.functions import *
 
 # Initialize Spark with optimized configs
@@ -26,7 +26,7 @@ schema = StructType([
     StructField("store_and_fwd_flag", StringType(), True),
     StructField("PULocationID", IntegerType(), True),
     StructField("DOLocationID", IntegerType(), True),
-    StructField("payment_type", LongType(), True),
+    StructField("payment_type", IntegerType(), True),
     StructField("fare_amount", FloatType(), True),
     StructField("extra", FloatType(), True),
     StructField("mta_tax", FloatType(), True),
@@ -57,14 +57,39 @@ df = spark \
     .load()
 
 print("✓ Connected to Kafka topic: uber_trips")
-print("✓ Starting from: LATEST offsets (no replay of old messages)")
+print("✓ Starting from: EARLIEST offsets (reading all messages in topic)")
 
 # Parse JSON and extract fields
 trips_df = df.select(
+    col("value").cast("string").alias("raw_json"),  # Keep raw JSON for debugging
     from_json(col("value").cast("string"), schema).alias("data"),
-    col("timestamp").alias("kafka_timestamp"),  # Kafka message timestamp
-    col("offset").alias("kafka_offset")         # Kafka offset for tracking
-).select("data.*", "kafka_timestamp", "kafka_offset")
+    col("timestamp").alias("kafka_timestamp"),
+    col("offset").alias("kafka_offset")
+)
+
+# DEBUG: Show what we're receiving
+print("🔍 DEBUG - Checking parsed data:")
+debug_df = trips_df.select(
+    "raw_json",
+    "data.trip_id",
+    "data.passenger_count",
+    "data.RatecodeID",
+    "data.payment_type"
+)
+
+# This will run once when first batch arrives
+debug_query = debug_df.writeStream \
+    .outputMode("append") \
+    .format("console") \
+    .option("numRows", 3) \
+    .option("truncate", False) \
+    .queryName("DebugQuery") \
+    .start()
+
+print("✓ Debug query started - will show first 3 records when they arrive")
+
+# Continue with main processing
+trips_df = trips_df.select("data.*", "kafka_timestamp", "kafka_offset")
 
 print("✓ JSON parsing configured")
 
@@ -81,7 +106,11 @@ print("✓ Timestamp conversions configured")
 
 # Add data quality check - filter out clearly bad records
 trips_df = trips_df.filter(
-    (col("trip_id").isNotNull()) 
+    (col("trip_id").isNotNull()) &
+    (col("pickup_ts").isNotNull()) &
+    (col("dropoff_ts").isNotNull()) &
+    (col("trip_distance") > 0) &
+    (col("fare_amount") > 0)
 )
 
 print("✓ Basic data quality filters applied")
@@ -98,19 +127,19 @@ query_parquet = trips_df \
     .queryName("UberTripsStreamingQuery") \
     .start()
 
-print("=" * 80)
+print("=" * 20)
 print("✓ Streaming query started successfully!")
-print("-" * 80)
+print("-" * 20)
 print("Configuration:")
 print(f"  • Output Path: D:/Just Data/Uber Real-Time Analytics Pipeline/uber_trips")
 print(f"  • Checkpoint: D:/Just Data/Uber Real-Time Analytics Pipeline/checkpoint")
 print(f"  • Trigger: Every 10 seconds")
 print(f"  • Compression: Snappy")
 print(f"  • Max Records/Batch: 1000")
-print("-" * 80)
+print("-" * 20)
 print("Status: ⏳ Waiting for new messages from Kafka...")
 print("         Press Ctrl+C to stop the consumer")
-print("=" * 80)
+print("=" * 20)
 
 # Monitor stream status
 try:
@@ -130,13 +159,17 @@ try:
         query_parquet.awaitTermination(timeout=30)
         
 except KeyboardInterrupt:
-    print("\n" + "=" * 80)
+    print("\n" + "=" * 20)
     print("🛑 Stopping streaming query...")
+    if 'debug_query' in locals():
+        debug_query.stop()
     query_parquet.stop()
     print("✓ Query stopped successfully")
-    print("=" * 80)
+    print("=" * 20)
 except Exception as e:
     print(f"\n❌ Error: {e}")
+    if 'debug_query' in locals():
+        debug_query.stop()
     query_parquet.stop()
 finally:
     spark.stop()

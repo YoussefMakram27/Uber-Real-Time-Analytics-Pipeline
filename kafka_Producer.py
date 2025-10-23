@@ -136,6 +136,16 @@ try:
         # Send records in this batch
         sent_in_batch = 0
         batch_start_time = time.time()
+        successfully_sent = []  # Track which trip_ids were confirmed by Kafka
+        
+        # Custom delivery callback to track successful sends
+        def batch_delivery_callback(err, msg):
+            if err is not None:
+                print(f"❌ Delivery failed for record {msg.key()}: {err}")
+            else:
+                # Message successfully delivered
+                trip_id = int(msg.key().decode('utf-8'))
+                successfully_sent.append(trip_id)
         
         for i, row in new_records.iterrows():
             if not running:  # Check if shutdown signal received
@@ -159,7 +169,7 @@ try:
                     topic=topic,
                     key=str(row['trip_id']),
                     value=json.dumps(record),
-                    on_delivery=delivery_report
+                    on_delivery=batch_delivery_callback  # Use our custom callback
                 )
                 sent_in_batch += 1
                 total_sent += 1
@@ -174,20 +184,33 @@ try:
             except Exception as e:
                 print(f"❌ Error sending trip_id {row['trip_id']}: {e}")
         
-        # Final flush for this batch
-        producer.flush()
+        # CRITICAL: Wait for ALL messages to be acknowledged by Kafka
+        print(f"   ⏳ Waiting for Kafka acknowledgments...")
+        producer.flush()  # This blocks until all messages are sent
         
-        # Save state after successful batch
-        last_id = int(new_records['trip_id'].max())
-        save_state(last_id)
+        # Give callbacks time to complete
+        producer.poll(1)
         
-        batch_elapsed = time.time() - batch_start_time
-        remaining = len(df) - last_id
-        
-        print(f"   ✓ Batch completed in {batch_elapsed:.2f}s")
-        print(f"   ✓ State saved: last_trip_id = {last_id}")
-        print(f"   ✓ Total sent so far: {total_sent:,} records")
-        print(f"   ✓ Remaining in dataset: {remaining:,}")
+        # Only save state for messages that were CONFIRMED by Kafka
+        if successfully_sent:
+            last_confirmed_id = max(successfully_sent)
+            save_state(last_confirmed_id)
+            
+            batch_elapsed = time.time() - batch_start_time
+            remaining = len(df) - last_confirmed_id
+            
+            print(f"   ✓ Batch completed in {batch_elapsed:.2f}s")
+            print(f"   ✓ Kafka confirmed: {len(successfully_sent)}/{sent_in_batch} messages")
+            print(f"   ✓ State saved: last_trip_id = {last_confirmed_id}")
+            print(f"   ✓ Total sent so far: {total_sent:,} records")
+            print(f"   ✓ Remaining in dataset: {remaining:,}")
+            
+            if len(successfully_sent) < sent_in_batch:
+                print(f"   ⚠️  WARNING: {sent_in_batch - len(successfully_sent)} messages failed!")
+        else:
+            print(f"   ❌ ERROR: No messages were confirmed by Kafka!")
+            # Don't update state if nothing was confirmed
+            break
         
         if not running:  # Check again before waiting
             break
