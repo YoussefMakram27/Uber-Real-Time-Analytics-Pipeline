@@ -2,7 +2,6 @@ from confluent_kafka import Consumer
 import json
 import pyodbc
 
-# --- Kafka Consumer Config ---
 conf = {
     'bootstrap.servers': 'localhost:9092',
     'group.id': 'uber-sql-writer',
@@ -12,7 +11,6 @@ conf = {
 consumer = Consumer(conf)
 consumer.subscribe(['uber_trips'])
 
-# --- SQL Server Connection ---
 conn = pyodbc.connect(
     'DRIVER={ODBC Driver 17 for SQL Server};'
     'SERVER=MYSTERYCHEETAH;'
@@ -20,9 +18,8 @@ conn = pyodbc.connect(
     'Trusted_Connection=yes;'
 )
 cursor = conn.cursor()
-cursor.fast_executemany = True  # ⚡ bulk insert
+cursor.fast_executemany = True  
 
-# --- Create table if not exists ---
 cursor.execute("""
 IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='uber_trips' AND xtype='U')
 CREATE TABLE uber_trips (
@@ -66,7 +63,6 @@ while True:
 
     trip = json.loads(msg.value().decode('utf-8'))
 
-    # Add trip_id to batch
     batch.append([
         trip.get('trip_id'),
         trip.get('VendorID'),
@@ -91,7 +87,6 @@ while True:
         trip.get('cbd_congestion_fee')
     ])
 
-    # Bulk insert when batch is ready
     if len(batch) >= batch_size:
         try:
             cursor.executemany("""
