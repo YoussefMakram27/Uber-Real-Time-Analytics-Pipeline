@@ -2,7 +2,6 @@ from pyspark.sql import SparkSession
 from pyspark.sql.types import StructType, StructField, IntegerType, FloatType, StringType, TimestampType, LongType, DoubleType
 from pyspark.sql.functions import *
 
-# Initialize Spark with optimized configs
 spark = SparkSession.builder \
     .appName("UberTripsKafkaConsumer") \
     .config("spark.jars.packages", "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0") \
@@ -11,10 +10,8 @@ spark = SparkSession.builder \
     .config("spark.sql.streaming.schemaInference", "false") \
     .getOrCreate()
 
-# Set log level to reduce noise
 spark.sparkContext.setLogLevel("WARN")
 
-# Schema definition
 schema = StructType([
     StructField("trip_id", IntegerType(), True),
     StructField("VendorID", IntegerType(), True),
@@ -43,7 +40,6 @@ print("=" * 80)
 print("Uber Trips Kafka Consumer - Structured Streaming")
 print("=" * 80)
 
-# Read from Kafka with improved settings
 df = spark \
     .readStream \
     .format("kafka") \
@@ -59,15 +55,13 @@ df = spark \
 print("✓ Connected to Kafka topic: uber_trips")
 print("✓ Starting from: EARLIEST offsets (reading all messages in topic)")
 
-# Parse JSON and extract fields
 trips_df = df.select(
-    col("value").cast("string").alias("raw_json"),  # Keep raw JSON for debugging
+    col("value").cast("string").alias("raw_json"),  
     from_json(col("value").cast("string"), schema).alias("data"),
     col("timestamp").alias("kafka_timestamp"),
     col("offset").alias("kafka_offset")
 )
 
-# DEBUG: Show what we're receiving
 print("🔍 DEBUG - Checking parsed data:")
 debug_df = trips_df.select(
     "raw_json",
@@ -77,7 +71,6 @@ debug_df = trips_df.select(
     "data.payment_type"
 )
 
-# This will run once when first batch arrives
 debug_query = debug_df.writeStream \
     .outputMode("append") \
     .format("console") \
@@ -88,23 +81,19 @@ debug_query = debug_df.writeStream \
 
 print("✓ Debug query started - will show first 3 records when they arrive")
 
-# Continue with main processing
 trips_df = trips_df.select("data.*", "kafka_timestamp", "kafka_offset")
 
 print("✓ JSON parsing configured")
 
-# Convert timestamp strings to proper timestamps
 trips_df = trips_df \
     .withColumn("pickup_ts", col("tpep_pickup_datetime").cast(TimestampType())) \
     .withColumn("dropoff_ts", col("tpep_dropoff_datetime").cast(TimestampType())) \
-    .withColumn("ingestion_time", current_timestamp())  # Track when we received it
+    .withColumn("ingestion_time", current_timestamp())
 
-# Drop the original string datetime columns to save space
 trips_df = trips_df.drop("tpep_pickup_datetime", "tpep_dropoff_datetime")
 
 print("✓ Timestamp conversions configured")
 
-# Add data quality check - filter out clearly bad records
 trips_df = trips_df.filter(
     (col("trip_id").isNotNull()) &
     (col("pickup_ts").isNotNull()) &
@@ -115,7 +104,6 @@ trips_df = trips_df.filter(
 
 print("✓ Basic data quality filters applied")
 
-# Write stream with optimized settings
 query_parquet = trips_df \
     .writeStream \
     .outputMode("append") \
@@ -141,9 +129,7 @@ print("Status: ⏳ Waiting for new messages from Kafka...")
 print("         Press Ctrl+C to stop the consumer")
 print("=" * 20)
 
-# Monitor stream status
 try:
-    # Wait for termination and show progress
     while query_parquet.isActive:
         status = query_parquet.status
         recent_progress = query_parquet.recentProgress
