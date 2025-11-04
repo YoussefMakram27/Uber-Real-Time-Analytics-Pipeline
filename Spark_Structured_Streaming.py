@@ -52,8 +52,8 @@ df = spark \
     .option("kafka.request.timeout.ms", "40000") \
     .load()
 
-print("✓ Connected to Kafka topic: uber_trips")
-print("✓ Starting from: EARLIEST offsets (reading all messages in topic)")
+print("Connected to Kafka topic: uber_trips")
+print("Starting from: EARLIEST offsets (reading all messages in topic)")
 
 trips_df = df.select(
     col("value").cast("string").alias("raw_json"),  
@@ -62,7 +62,7 @@ trips_df = df.select(
     col("offset").alias("kafka_offset")
 )
 
-print("🔍 DEBUG - Checking parsed data:")
+print("Checking parsed data:")
 debug_df = trips_df.select(
     "raw_json",
     "data.trip_id",
@@ -79,11 +79,11 @@ debug_query = debug_df.writeStream \
     .queryName("DebugQuery") \
     .start()
 
-print("✓ Debug query started - will show first 3 records when they arrive")
+print("Debug query started - will show first 3 records when they arrive")
 
 trips_df = trips_df.select("data.*", "kafka_timestamp", "kafka_offset")
 
-print("✓ JSON parsing configured")
+print("JSON parsing configured")
 
 trips_df = trips_df \
     .withColumn("pickup_ts", col("tpep_pickup_datetime").cast(TimestampType())) \
@@ -92,7 +92,7 @@ trips_df = trips_df \
 
 trips_df = trips_df.drop("tpep_pickup_datetime", "tpep_dropoff_datetime")
 
-print("✓ Timestamp conversions configured")
+print("Timestamp conversions configured")
 
 trips_df = trips_df.filter(
     (col("trip_id").isNotNull()) &
@@ -102,7 +102,7 @@ trips_df = trips_df.filter(
     (col("fare_amount") > 0)
 )
 
-print("✓ Basic data quality filters applied")
+print("Basic data quality filters applied")
 
 query_parquet = trips_df \
     .writeStream \
@@ -116,7 +116,7 @@ query_parquet = trips_df \
     .start()
 
 print("=" * 20)
-print("✓ Streaming query started successfully!")
+print(" Streaming query started successfully!")
 print("-" * 20)
 print("Configuration:")
 print(f"  • Output Path: D:/Just Data/Uber Real-Time Analytics Pipeline/uber_trips")
@@ -125,7 +125,7 @@ print(f"  • Trigger: Every 10 seconds")
 print(f"  • Compression: Snappy")
 print(f"  • Max Records/Batch: 1000")
 print("-" * 20)
-print("Status: ⏳ Waiting for new messages from Kafka...")
+print("Status:  Waiting for new messages from Kafka...")
 print("         Press Ctrl+C to stop the consumer")
 print("=" * 20)
 
@@ -146,17 +146,17 @@ try:
         
 except KeyboardInterrupt:
     print("\n" + "=" * 20)
-    print("🛑 Stopping streaming query...")
+    print(" Stopping streaming query...")
     if 'debug_query' in locals():
         debug_query.stop()
     query_parquet.stop()
-    print("✓ Query stopped successfully")
+    print("Query stopped successfully")
     print("=" * 20)
 except Exception as e:
-    print(f"\n❌ Error: {e}")
+    print(f"\n Error: {e}")
     if 'debug_query' in locals():
         debug_query.stop()
     query_parquet.stop()
 finally:
     spark.stop()
-    print("✓ Spark session closed")
+    print("Spark session closed")
