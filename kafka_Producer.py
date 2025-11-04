@@ -6,16 +6,13 @@ import signal
 import sys
 from confluent_kafka import Producer
 
-# --- Kafka Config ---
 bootstrap_servers = 'localhost:9092'
 topic = 'uber_trips'
 
-# --- State Tracking Config ---
-STATE_FILE = 'producer_state.json'  # Tracks last sent trip_id
-BATCH_SIZE = 50  # How many records to send per batch
-DELAY_BETWEEN_BATCHES = 5  # Seconds to wait between batches
+STATE_FILE = 'producer_state.json'  
+BATCH_SIZE = 50  
+DELAY_BETWEEN_BATCHES = 5  
 
-# --- Global flag for graceful shutdown ---
 running = True
 
 def signal_handler(sig, frame):
@@ -26,10 +23,8 @@ def signal_handler(sig, frame):
     print("=" * 70)
     running = False
 
-# Register signal handler
 signal.signal(signal.SIGINT, signal_handler)
 
-# --- Functions for State Management ---
 def load_state():
     """Load the last processed trip_id from state file"""
     if os.path.exists(STATE_FILE):
@@ -53,32 +48,26 @@ def save_state(last_trip_id):
             'last_updated': time.strftime('%Y-%m-%d %H:%M:%S')
         }, f, indent=2)
 
-# --- Delivery report ---
 def delivery_report(err, msg):
     if err is not None:
         print(f"❌ Delivery failed for record {msg.key()}: {err}")
 
-# --- Initialize Producer ---
 producer = Producer({'bootstrap.servers': bootstrap_servers})
 
-# --- Load data ---
 print("=" * 70)
 print("Uber Trips Kafka Producer (Continuous Mode)")
 print("=" * 70)
 
 df = pd.read_parquet(r'D:\Just Data\Uber Real-Time Analytics Pipeline\yellow_tripdata_2025-01.parquet')
 
-# --- Generate trip_id starting from 1 ---
 df = df.reset_index(drop=True)
 df['trip_id'] = df.index + 1
 
 print(f"📊 Total records in dataset: {len(df):,}")
 
-# Ensure datetime columns are string
 datetime_cols = ['tpep_pickup_datetime', 'tpep_dropoff_datetime']
 df[datetime_cols] = df[datetime_cols].astype(str)
 
-# Replace NaN with None for JSON serialization
 df = df.where(pd.notnull(df), None)
 
 print(f"🔄 Batch size: {BATCH_SIZE} records")
@@ -87,11 +76,9 @@ print("-" * 70)
 print("⏳ Starting continuous streaming... (Press Ctrl+C to stop)")
 print("=" * 70)
 
-# --- Continuous streaming loop ---
 total_sent = 0
 batch_count = 0
 
-# DEBUG: Check source data before sending
 print("\n🔍 DEBUG - Checking source data quality:")
 print(f"passenger_count NaN count: {df['passenger_count'].isna().sum()} / {len(df)}")
 print(f"RatecodeID NaN count: {df['RatecodeID'].isna().sum()} / {len(df)}")
@@ -101,10 +88,8 @@ print("=" * 70)
 
 try:
     while running:
-        # Get last processed trip_id
         last_trip_id = load_state()
         
-        # Filter only NEW records
         new_records = df[df['trip_id'] > last_trip_id].head(BATCH_SIZE)
         
         if new_records.empty:
@@ -122,7 +107,6 @@ try:
         
         print(f"\n📦 Batch #{batch_count}: Sending records {batch_start} to {batch_end}")
         
-        # DEBUG: Check first record in batch
         if batch_count == 1:
             first_record = new_records.iloc[0]
             print("\n🔍 DEBUG - First record before sending:")
@@ -133,32 +117,27 @@ try:
             print(f"  Is passenger_count NaN? {pd.isna(first_record['passenger_count'])}")
             print(f"  Is RatecodeID NaN? {pd.isna(first_record['RatecodeID'])}")
         
-        # Send records in this batch
         sent_in_batch = 0
         batch_start_time = time.time()
-        successfully_sent = []  # Track which trip_ids were confirmed by Kafka
+        successfully_sent = []  
         
-        # Custom delivery callback to track successful sends
         def batch_delivery_callback(err, msg):
             if err is not None:
                 print(f"❌ Delivery failed for record {msg.key()}: {err}")
             else:
-                # Message successfully delivered
                 trip_id = int(msg.key().decode('utf-8'))
                 successfully_sent.append(trip_id)
         
         for i, row in new_records.iterrows():
-            if not running:  # Check if shutdown signal received
+            if not running:  
                 break
                 
             record = row.to_dict()
             
-            # DEBUG: Print JSON payload for first record
             if sent_in_batch == 0 and batch_count == 1:
                 json_payload = json.dumps(record)
                 print(f"\n🔍 DEBUG - JSON payload being sent:")
                 print(f"  Full JSON: {json_payload[:500]}...")
-                # Parse it back to check
                 parsed = json.loads(json_payload)
                 print(f"  Parsed back - passenger_count: {parsed.get('passenger_count')}")
                 print(f"  Parsed back - RatecodeID: {parsed.get('RatecodeID')}")
@@ -169,29 +148,25 @@ try:
                     topic=topic,
                     key=str(row['trip_id']),
                     value=json.dumps(record),
-                    on_delivery=batch_delivery_callback  # Use our custom callback
+                    on_delivery=batch_delivery_callback  
                 )
                 sent_in_batch += 1
                 total_sent += 1
                 
-                # Progress indicator every 10 records
                 if sent_in_batch % 10 == 0:
                     print(f"   ↳ Sent {sent_in_batch}/{len(new_records)} records...")
-                    producer.poll(0)  # Serve delivery callbacks
+                    producer.poll(0)
                 
-                time.sleep(0.1)  # Small delay between messages (0.1s = 10 msg/sec)
+                time.sleep(0.1)  
                 
             except Exception as e:
                 print(f"❌ Error sending trip_id {row['trip_id']}: {e}")
         
-        # CRITICAL: Wait for ALL messages to be acknowledged by Kafka
         print(f"   ⏳ Waiting for Kafka acknowledgments...")
-        producer.flush()  # This blocks until all messages are sent
+        producer.flush() 
         
-        # Give callbacks time to complete
         producer.poll(1)
         
-        # Only save state for messages that were CONFIRMED by Kafka
         if successfully_sent:
             last_confirmed_id = max(successfully_sent)
             save_state(last_confirmed_id)
@@ -209,13 +184,11 @@ try:
                 print(f"   ⚠️  WARNING: {sent_in_batch - len(successfully_sent)} messages failed!")
         else:
             print(f"   ❌ ERROR: No messages were confirmed by Kafka!")
-            # Don't update state if nothing was confirmed
             break
         
-        if not running:  # Check again before waiting
+        if not running:  
             break
         
-        # Wait before next batch (only if there are more records)
         if remaining > 0:
             print(f"   ⏸️  Waiting {DELAY_BETWEEN_BATCHES}s before next batch...")
             time.sleep(DELAY_BETWEEN_BATCHES)
@@ -225,7 +198,6 @@ except KeyboardInterrupt:
 except Exception as e:
     print(f"\n❌ Unexpected error: {e}")
 finally:
-    # Cleanup
     producer.flush()
     print("\n" + "=" * 70)
     print("📊 FINAL SUMMARY")
