@@ -16,24 +16,22 @@ DELAY_BETWEEN_BATCHES = 5
 running = True
 
 def signal_handler(sig, frame):
-    """Handle Ctrl+C gracefully"""
     global running
     print("\n" + "=" * 70)
-    print("🛑 Shutdown signal received. Finishing current batch...")
+    print("Shutdown signal received. Finishing current batch...")
     print("=" * 70)
     running = False
 
 signal.signal(signal.SIGINT, signal_handler)
 
 def load_state():
-    """Load the last processed trip_id from state file"""
     if os.path.exists(STATE_FILE):
         try:
             with open(STATE_FILE, 'r') as f:
                 state = json.load(f)
                 return state.get('last_trip_id', 0)
         except (json.JSONDecodeError, ValueError) as e:
-            print(f"⚠️  Warning: Corrupted state file. Starting from beginning.")
+            print(f"Warning: Corrupted state file. Starting from beginning.")
             print(f"   Error: {e}")
             # Delete corrupted file
             os.remove(STATE_FILE)
@@ -41,7 +39,6 @@ def load_state():
     return 0
 
 def save_state(last_trip_id):
-    """Save the last processed trip_id to state file"""
     with open(STATE_FILE, 'w') as f:
         json.dump({
             'last_trip_id': int(last_trip_id),
@@ -50,7 +47,7 @@ def save_state(last_trip_id):
 
 def delivery_report(err, msg):
     if err is not None:
-        print(f"❌ Delivery failed for record {msg.key()}: {err}")
+        print(f"Delivery failed for record {msg.key()}: {err}")
 
 producer = Producer({'bootstrap.servers': bootstrap_servers})
 
@@ -63,17 +60,17 @@ df = pd.read_parquet(r'D:\Just Data\Uber Real-Time Analytics Pipeline\yellow_tri
 df = df.reset_index(drop=True)
 df['trip_id'] = df.index + 1
 
-print(f"📊 Total records in dataset: {len(df):,}")
+print(f" Total records in dataset: {len(df):,}")
 
 datetime_cols = ['tpep_pickup_datetime', 'tpep_dropoff_datetime']
 df[datetime_cols] = df[datetime_cols].astype(str)
 
 df = df.where(pd.notnull(df), None)
 
-print(f"🔄 Batch size: {BATCH_SIZE} records")
-print(f"⏱️  Delay between batches: {DELAY_BETWEEN_BATCHES} seconds")
+print(f"Batch size: {BATCH_SIZE} records")
+print(f"Delay between batches: {DELAY_BETWEEN_BATCHES} seconds")
 print("-" * 70)
-print("⏳ Starting continuous streaming... (Press Ctrl+C to stop)")
+print("Starting continuous streaming...")
 print("=" * 70)
 
 total_sent = 0
@@ -94,7 +91,7 @@ try:
         
         if new_records.empty:
             print("\n" + "=" * 70)
-            print("🎉 All records have been processed!")
+            print("All records have been processed!")
             print(f"   Total records sent: {total_sent:,}")
             print(f"   Total batches: {batch_count}")
             print(f"   To restart from beginning, delete: {STATE_FILE}")
@@ -105,11 +102,11 @@ try:
         batch_start = int(new_records['trip_id'].min())
         batch_end = int(new_records['trip_id'].max())
         
-        print(f"\n📦 Batch #{batch_count}: Sending records {batch_start} to {batch_end}")
+        print(f"\nBatch #{batch_count}: Sending records {batch_start} to {batch_end}")
         
         if batch_count == 1:
             first_record = new_records.iloc[0]
-            print("\n🔍 DEBUG - First record before sending:")
+            print("\nDEBUG - First record before sending:")
             print(f"  trip_id: {first_record['trip_id']} (type: {type(first_record['trip_id'])})")
             print(f"  passenger_count: {first_record['passenger_count']} (type: {type(first_record['passenger_count'])})")
             print(f"  RatecodeID: {first_record['RatecodeID']} (type: {type(first_record['RatecodeID'])})")
@@ -123,7 +120,7 @@ try:
         
         def batch_delivery_callback(err, msg):
             if err is not None:
-                print(f"❌ Delivery failed for record {msg.key()}: {err}")
+                print(f" Delivery failed for record {msg.key()}: {err}")
             else:
                 trip_id = int(msg.key().decode('utf-8'))
                 successfully_sent.append(trip_id)
@@ -136,7 +133,7 @@ try:
             
             if sent_in_batch == 0 and batch_count == 1:
                 json_payload = json.dumps(record)
-                print(f"\n🔍 DEBUG - JSON payload being sent:")
+                print(f"\nDEBUG - JSON payload being sent:")
                 print(f"  Full JSON: {json_payload[:500]}...")
                 parsed = json.loads(json_payload)
                 print(f"  Parsed back - passenger_count: {parsed.get('passenger_count')}")
@@ -160,9 +157,9 @@ try:
                 time.sleep(0.1)  
                 
             except Exception as e:
-                print(f"❌ Error sending trip_id {row['trip_id']}: {e}")
+                print(f"Error sending trip_id {row['trip_id']}: {e}")
         
-        print(f"   ⏳ Waiting for Kafka acknowledgments...")
+        print(f"   Waiting for Kafka acknowledgments...")
         producer.flush() 
         
         producer.poll(1)
@@ -174,38 +171,38 @@ try:
             batch_elapsed = time.time() - batch_start_time
             remaining = len(df) - last_confirmed_id
             
-            print(f"   ✓ Batch completed in {batch_elapsed:.2f}s")
-            print(f"   ✓ Kafka confirmed: {len(successfully_sent)}/{sent_in_batch} messages")
-            print(f"   ✓ State saved: last_trip_id = {last_confirmed_id}")
-            print(f"   ✓ Total sent so far: {total_sent:,} records")
-            print(f"   ✓ Remaining in dataset: {remaining:,}")
+            print(f"   Batch completed in {batch_elapsed:.2f}s")
+            print(f"    Kafka confirmed: {len(successfully_sent)}/{sent_in_batch} messages")
+            print(f"    state saved: last_trip_id = {last_confirmed_id}")
+            print(f"   Total sent so far: {total_sent:,} records")
+            print(f"    Remaining in dataset: {remaining:,}")
             
             if len(successfully_sent) < sent_in_batch:
-                print(f"   ⚠️  WARNING: {sent_in_batch - len(successfully_sent)} messages failed!")
+                print(f"   WARNING: {sent_in_batch - len(successfully_sent)} messages failed!")
         else:
-            print(f"   ❌ ERROR: No messages were confirmed by Kafka!")
+            print(f"   ERROR: No messages were confirmed by Kafka!")
             break
         
         if not running:  
             break
         
         if remaining > 0:
-            print(f"   ⏸️  Waiting {DELAY_BETWEEN_BATCHES}s before next batch...")
+            print(f"   Waiting {DELAY_BETWEEN_BATCHES}s before next batch...")
             time.sleep(DELAY_BETWEEN_BATCHES)
 
 except KeyboardInterrupt:
-    print("\n🛑 Interrupted by user")
+    print("\nInterrupted by user")
 except Exception as e:
-    print(f"\n❌ Unexpected error: {e}")
+    print(f"\nUnexpected error: {e}")
 finally:
     producer.flush()
     print("\n" + "=" * 70)
-    print("📊 FINAL SUMMARY")
+    print("FINAL SUMMARY")
     print("=" * 70)
-    print(f"✓ Total records sent: {total_sent:,}")
-    print(f"✓ Total batches: {batch_count}")
-    print(f"✓ Last trip_id: {load_state()}")
-    print(f"✓ State saved to: {STATE_FILE}")
+    print(f"Total records sent: {total_sent:,}")
+    print(f"Total batches: {batch_count}")
+    print(f"Last trip_id: {load_state()}")
+    print(f"State saved to: {STATE_FILE}")
     print("=" * 70)
-    print("💡 Run this script again to continue from where it stopped")
+    print(" Run this script again to continue from where it stopped")
     print("=" * 70)
